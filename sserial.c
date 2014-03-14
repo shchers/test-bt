@@ -14,65 +14,93 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include "sserial.h"
 
-// Storage of the original terminal properties
-static struct termios origTermInfo;
-
-int OpenPort(const char *portName) {
-	int fd;
+struct sserial_props *OpenPort(const char *portName) {
+	struct sserial_props *pProps;
 	struct termios attr;
 
+	pProps = (struct sserial_props *)malloc(sizeof(struct sserial_props));
+	if (pProps == NULL) {
+		fprintf(stderr, "[%s]: Allocating pProps failed with error \"%s\"\n",
+				__func__, strerror(errno));
+		return NULL;
+	}
+
+	//pProps->mtx = PTHREAD_MUTEX_INITIALIZER;
+
 	fprintf(stderr, "Port name: %s\n", portName);
-	if ((fd = open(portName, O_RDWR)) == -1) {
+	if ((pProps->fd = open(portName, O_RDWR)) == -1) {
 		fprintf(stderr, "[%s]: open() failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		return -1;
+		goto error_open;
 	}
-	if (tcgetattr(fd, &origTermInfo) == -1) {
+
+	if (tcgetattr(pProps->fd, &pProps->otinfo) == -1) {
 		fprintf(stderr, "[%s]: tcgetattr() failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		goto error;
+		goto error_init;
 	}
-	attr = origTermInfo;
+
+	attr = pProps->otinfo;
 	attr.c_cflag |= /*CRTSCTS |*/ CLOCAL;
 	attr.c_oflag = 0;
-	if (tcflush(fd, TCIOFLUSH) == -1) {
+	if (tcflush(pProps->fd, TCIOFLUSH) == -1) {
 		fprintf(stderr, "[%s]: tcflush() failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		goto error;
+		goto error_init;
 	}
 
-	if (tcsetattr(fd, TCSANOW, &attr) == -1) {
+	if (tcsetattr(pProps->fd, TCSANOW, &attr) == -1) {
 		fprintf(stderr, "[%s]: tcsetattr() failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		goto error;
+		goto error_init;
 	}
 
-	return fd;
+	return pProps;
 
-error:
-	if (close(fd)) {
+error_init:
+	if (close(pProps->fd)) {
 		fprintf(stderr, "[%s]: Closing port file descriptor (%d) failed with error \"%s\"\n",
-				__func__, fd, strerror(errno));
+				__func__, pProps->fd, strerror(errno));
 	}
 
-	return -1;
+error_open:
+	free(pProps);
+
+	return NULL;
 }
 
-void ClosePort(int fd) {
-	tcsetattr(fd, TCSANOW, &origTermInfo);
-	if (close(fd)) {
-		fprintf(stderr, "[%s]: Closing port file descriptor (%d) failed with error \"%s\"\n",
-				__func__, fd, strerror(errno));
+void ClosePort(struct sserial_props *pProps) {
+	if (pProps == NULL) {
+		fprintf(stderr, "[%s]: pProps is NULL\n", __func__);
+		return;
 	}
+
+	if (pProps->fd < 0) {
+		fprintf(stderr, "[%s]: Wrong file descriptor (%d)\n",
+				__func__, pProps->fd);
+		return;
+	}
+
+	tcsetattr(pProps->fd, TCSANOW, &pProps->otinfo);
+	if (close(pProps->fd)) {
+		fprintf(stderr, "[%s]: Closing port file descriptor (%d) failed with error \"%s\"\n",
+				__func__, pProps->fd, strerror(errno));
+	}
+
+	free(pProps);
 }
 
-int updateRts(int fd, int bSet) {
+int UpdateRts(struct sserial_props *pProps, int bSet) {
 	int status;
 
-	if (ioctl(fd, TIOCMGET, &status) == -1) {
+	pthread_mutex_lock(&pProps->mtx);
+
+	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
 				__func__, strerror(errno));
+		pthread_mutex_unlock(&pProps->mtx);
 		return 0;
 	}
 
@@ -81,21 +109,26 @@ int updateRts(int fd, int bSet) {
 	else
 		status &= ~TIOCM_RTS;
 
-	if (ioctl(fd, TIOCMSET, &status) == -1) {
+	if (ioctl(pProps->fd, TIOCMSET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMSET failed with error \"%s\"\n",
 				__func__, strerror(errno));
+		pthread_mutex_unlock(&pProps->mtx);
 		return 0;
 	}
 
+	pthread_mutex_unlock(&pProps->mtx);
 	return 1;
 }
 
-int updateDtr(int fd, int bSet) {
+int UpdateDtr(struct sserial_props *pProps, int bSet) {
 	int status;
 
-	if (ioctl(fd, TIOCMGET, &status) == -1) {
+	pthread_mutex_lock(&pProps->mtx);
+
+	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
 				__func__, strerror(errno));
+		pthread_mutex_unlock(&pProps->mtx);
 		return 0;
 	}
 
@@ -104,11 +137,13 @@ int updateDtr(int fd, int bSet) {
 	else
 		status &= ~TIOCM_DTR;
 
-	if (ioctl(fd, TIOCMSET, &status) == -1) {
+	if (ioctl(pProps->fd, TIOCMSET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMSET failed with error \"%s\"\n",
 				__func__, strerror(errno));
+		pthread_mutex_unlock(&pProps->mtx);
 		return 0;
 	}
 
+	pthread_mutex_unlock(&pProps->mtx);
 	return 1;
 }

@@ -3,15 +3,32 @@
  * (c) Sergey Shcherbakov <shchers@gmail.com>
  */
 
+#include <termios.h>
+#include <pthread.h>
+
+#ifndef SSERIAL_H
+#define SSERIAL_H
+
 #ifndef CRLF
 #define CRLF "\x0d\x0a"
 #endif
 
-int OpenPort(const char *portName);
-void ClosePort(int fd);
-int updateRts(int fd, int bSet);
-#define setRts(fd) updateRts(fd, 1)
-#define clrRts(fd) updateRts(fd, 0)
-int updateDtr(int fd, int bSet);
-#define setDtr(fd) updateDtr(fd, 1)
-#define clrDtr(fd) updateDtr(fd, 0)
+struct sserial_props {
+	/// Port file descriptor
+	int fd;
+	/// Storage of the original terminal properties
+	struct termios otinfo;
+	/// Synchronization mutex
+	pthread_mutex_t mtx;
+};
+
+struct sserial_props *OpenPort(const char *portName);
+void ClosePort(struct sserial_props *pProps);
+int UpdateRts(struct sserial_props *pProps, int bSet);
+#define SetRts(pProps) UpdateRts(pProps, 1)
+#define ClrRts(pProps) UpdateRts(pProps, 0)
+int UpdateDtr(struct sserial_props *pProps, int bSet);
+#define SetDtr(pProps) UpdateDtr(pProps, 1)
+#define ClrDtr(pProps) UpdateDtr(pProps, 0)
+
+#endif // SSERIAL_H
