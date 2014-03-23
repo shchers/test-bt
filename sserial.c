@@ -3,20 +3,46 @@
  * (c) Sergey Shcherbakov <shchers@gmail.com>
  */
 
+#include <termios.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
-#include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <linux/serial.h>
 #include "sserial.h"
 
-struct sserial_props *OpenPort(const char *portName) {
+#ifndef CRTSCTS
+#define CRTSCTS  020000000000		/* flow control */
+#endif
+
+static int SetBaudrate(struct sserial_props *pProps, int nBaudrate) {
+	struct serial_struct ser_info;
+
+	if (ioctl(pProps->fd, TIOCGSERIAL, &ser_info) == -1) {
+		fprintf(stderr, "[%s]: TIOCGSERIAL failed with error \"%s\"\n",
+				__func__, strerror(errno));
+		return 0;
+	}
+
+	ser_info.flags = ASYNC_SPD_CUST | ASYNC_LOW_LATENCY;
+	ser_info.custom_divisor = ser_info.baud_base / nBaudrate;
+
+	if (ioctl(pProps->fd, TIOCSSERIAL, &ser_info) == -1) {
+		fprintf(stderr, "[%s]: TIOCGSERIAL failed with error \"%s\"\n",
+				__func__, strerror(errno));
+		return 0;
+	}
+
+	return 1;
+}
+
+struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	struct sserial_props *pProps;
 	struct termios attr;
 
@@ -27,14 +53,18 @@ struct sserial_props *OpenPort(const char *portName) {
 		return NULL;
 	}
 
-	//pProps->mtx = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutex_init(&pProps->mtx_ctrl, NULL);
+	pthread_mutex_init(&pProps->mtx_rx, NULL);
+	pthread_mutex_init(&pProps->mtx_tx, NULL);
 
-	fprintf(stderr, "Port name: %s\n", portName);
-	if ((pProps->fd = open(portName, O_RDWR)) == -1) {
+	fprintf(stderr, "Port name: %s Baudrate: %d\n", portName, nBaudrate);
+	if ((pProps->fd = open(portName, O_RDWR | O_NOCTTY | O_NONBLOCK)) == -1) {
 		fprintf(stderr, "[%s]: open() failed with error \"%s\"\n",
 				__func__, strerror(errno));
 		goto error_open;
 	}
+
+	fcntl(pProps->fd, F_SETFL, FNDELAY);
 
 	if (tcgetattr(pProps->fd, &pProps->otinfo) == -1) {
 		fprintf(stderr, "[%s]: tcgetattr() failed with error \"%s\"\n",
@@ -43,20 +73,39 @@ struct sserial_props *OpenPort(const char *portName) {
 	}
 
 	attr = pProps->otinfo;
-	attr.c_cflag |= /*CRTSCTS |*/ CLOCAL;
-	attr.c_oflag = 0;
+
+	// Set baudrate
+	cfsetospeed (&attr, (speed_t)B38400);
+	cfsetispeed (&attr, (speed_t)B38400);
+
+	attr.c_cflag &= ~PARENB;
+	attr.c_cflag &= ~CSTOPB;
+	attr.c_cflag &= ~CSIZE;
+	attr.c_cflag &= ~CRTSCTS;
+	attr.c_cflag |= CS8 | CREAD | CLOCAL;
+	attr.c_oflag &= ~OPOST;
+	attr.c_iflag &= ~(IXON | IXOFF | IXANY);
+	attr.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+	attr.c_cc[VMIN] = 1;
+	attr.c_cc[VTIME] = 5;
 	if (tcflush(pProps->fd, TCIOFLUSH) == -1) {
 		fprintf(stderr, "[%s]: tcflush() failed with error \"%s\"\n",
 				__func__, strerror(errno));
 		goto error_init;
 	}
 
+	//cfmakeraw(&attr);
 	if (tcsetattr(pProps->fd, TCSANOW, &attr) == -1) {
 		fprintf(stderr, "[%s]: tcsetattr() failed with error \"%s\"\n",
 				__func__, strerror(errno));
 		goto error_init;
 	}
-
+/*
+	if (!SetBaudrate(pProps, nBaudrate)) {
+		fprintf(stderr, "[%s]: Configuring baudrate failed\n", __func__);
+		goto error_init;
+	}
+*/
 	return pProps;
 
 error_init:
@@ -95,12 +144,12 @@ void ClosePort(struct sserial_props *pProps) {
 int UpdateRts(struct sserial_props *pProps, int bSet) {
 	int status;
 
-	pthread_mutex_lock(&pProps->mtx);
+	pthread_mutex_lock(&pProps->mtx_ctrl);
 
 	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		pthread_mutex_unlock(&pProps->mtx);
+		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
 	}
 
@@ -112,23 +161,23 @@ int UpdateRts(struct sserial_props *pProps, int bSet) {
 	if (ioctl(pProps->fd, TIOCMSET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMSET failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		pthread_mutex_unlock(&pProps->mtx);
+		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
 	}
 
-	pthread_mutex_unlock(&pProps->mtx);
+	pthread_mutex_unlock(&pProps->mtx_ctrl);
 	return 1;
 }
 
 int UpdateDtr(struct sserial_props *pProps, int bSet) {
 	int status;
 
-	pthread_mutex_lock(&pProps->mtx);
+	pthread_mutex_lock(&pProps->mtx_ctrl);
 
 	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		pthread_mutex_unlock(&pProps->mtx);
+		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
 	}
 
@@ -140,10 +189,51 @@ int UpdateDtr(struct sserial_props *pProps, int bSet) {
 	if (ioctl(pProps->fd, TIOCMSET, &status) == -1) {
 		fprintf(stderr, "[%s]: TIOCMSET failed with error \"%s\"\n",
 				__func__, strerror(errno));
-		pthread_mutex_unlock(&pProps->mtx);
+		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
 	}
 
-	pthread_mutex_unlock(&pProps->mtx);
+	pthread_mutex_unlock(&pProps->mtx_ctrl);
 	return 1;
+}
+
+int GetCts(struct sserial_props *pProps) {
+	int status;
+
+	pthread_mutex_lock(&pProps->mtx_ctrl);
+
+	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
+		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
+				__func__, strerror(errno));
+		pthread_mutex_unlock(&pProps->mtx_ctrl);
+		return -1;
+	}
+
+	status &= TIOCM_CTS;
+
+	pthread_mutex_unlock(&pProps->mtx_ctrl);
+	return status > 0;
+}
+
+ssize_t ReadPort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
+	if (pthread_mutex_trylock(&pProps->mtx_rx) == EBUSY) {
+		fprintf(stderr, "[%s]: Another read process ongoing\n", __func__);
+		return -1;
+	}
+
+	ssize_t nRead = read(pProps->fd, pBuff, nSize);
+	pthread_mutex_unlock(&pProps->mtx_rx);
+	return nRead;
+}
+
+ssize_t WritePort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
+	if (pthread_mutex_trylock(&pProps->mtx_tx) == EBUSY) {
+		fprintf(stderr, "[%s]: Another read process ongoing\n", __func__);
+		return -1;
+	}
+
+	fprintf(stderr, "[%s]: 222\n", __func__);
+	ssize_t nWritten = write(pProps->fd, pBuff, nSize);
+	pthread_mutex_unlock(&pProps->mtx_tx);
+	return nWritten;
 }
