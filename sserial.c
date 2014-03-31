@@ -21,6 +21,7 @@
 #define CRTSCTS  020000000000		/* flow control */
 #endif
 
+#if 0
 static int SetBaudrate(struct sserial_props *pProps, int nBaudrate) {
 	struct serial_struct ser_info;
 
@@ -41,6 +42,7 @@ static int SetBaudrate(struct sserial_props *pProps, int nBaudrate) {
 
 	return 1;
 }
+#endif
 
 struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	struct sserial_props *pProps;
@@ -58,13 +60,13 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	pthread_mutex_init(&pProps->mtx_tx, NULL);
 
 	fprintf(stderr, "Port name: %s Baudrate: %d\n", portName, nBaudrate);
-	if ((pProps->fd = open(portName, O_RDWR | O_NOCTTY | O_NONBLOCK)) == -1) {
+	if ((pProps->fd = open(portName, O_RDWR | O_NOCTTY | O_NDELAY)) == -1) {
 		fprintf(stderr, "[%s]: open() failed with error \"%s\"\n",
 				__func__, strerror(errno));
 		goto error_open;
 	}
 
-	fcntl(pProps->fd, F_SETFL, FNDELAY);
+	fcntl(pProps->fd, F_SETFL, /*FNDELAY*/0);
 
 	if (tcgetattr(pProps->fd, &pProps->otinfo) == -1) {
 		fprintf(stderr, "[%s]: tcgetattr() failed with error \"%s\"\n",
@@ -86,8 +88,8 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	attr.c_oflag &= ~OPOST;
 	attr.c_iflag &= ~(IXON | IXOFF | IXANY);
 	attr.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-	attr.c_cc[VMIN] = 1;
-	attr.c_cc[VTIME] = 5;
+	attr.c_cc[VMIN] = 0;
+	attr.c_cc[VTIME] = 150;
 	if (tcflush(pProps->fd, TCIOFLUSH) == -1) {
 		fprintf(stderr, "[%s]: tcflush() failed with error \"%s\"\n",
 				__func__, strerror(errno));
@@ -100,12 +102,17 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 				__func__, strerror(errno));
 		goto error_init;
 	}
-/*
+
+#if 0
 	if (!SetBaudrate(pProps, nBaudrate)) {
 		fprintf(stderr, "[%s]: Configuring baudrate failed\n", __func__);
 		goto error_init;
 	}
-*/
+#endif
+
+	// Flush port I/O queue
+	tcflush(pProps->fd,TCIOFLUSH);
+
 	return pProps;
 
 error_init:
@@ -222,6 +229,12 @@ ssize_t ReadPort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
 	}
 
 	ssize_t nRead = read(pProps->fd, pBuff, nSize);
+#if DEBUG
+	if (nRead == -1) {
+		fprintf(stderr, "[%s]: Detected error on read %d = \"%s\"\n", __func__,
+				errno, strerror(errno));
+	}
+#endif
 	pthread_mutex_unlock(&pProps->mtx_rx);
 	return nRead;
 }
@@ -232,8 +245,13 @@ ssize_t WritePort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
 		return -1;
 	}
 
-	fprintf(stderr, "[%s]: 222\n", __func__);
 	ssize_t nWritten = write(pProps->fd, pBuff, nSize);
+#if DEBUG
+	if (nWritten == -1) {
+		fprintf(stderr, "[%s]: Detected error on write %d = \"%s\"\n", __func__,
+				errno, strerror(errno));
+	}
+#endif
 	pthread_mutex_unlock(&pProps->mtx_tx);
 	return nWritten;
 }

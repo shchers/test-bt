@@ -1,4 +1,7 @@
 CC := $(CROSS_COMPILE)gcc
+ifeq ($(DEBUG),1)
+CFLAGS += -DDEBUG
+endif
 CFLAGS += -std=gnu89
 CFLAGS += -D__USE_MISC
 LDFLAGS += -pthread
