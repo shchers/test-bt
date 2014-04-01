@@ -17,6 +17,9 @@
 #include <linux/serial.h>
 #include "sserial.h"
 
+#define TAG "SSerial"
+#include "log.h"
+
 #ifndef CRTSCTS
 #define CRTSCTS  020000000000		/* flow control */
 #endif
@@ -26,7 +29,7 @@ static int SetBaudrate(struct sserial_props *pProps, int nBaudrate) {
 	struct serial_struct ser_info;
 
 	if (ioctl(pProps->fd, TIOCGSERIAL, &ser_info) == -1) {
-		fprintf(stderr, "[%s]: TIOCGSERIAL failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCGSERIAL failed with error \"%s\"",
 				__func__, strerror(errno));
 		return 0;
 	}
@@ -35,7 +38,7 @@ static int SetBaudrate(struct sserial_props *pProps, int nBaudrate) {
 	ser_info.custom_divisor = ser_info.baud_base / nBaudrate;
 
 	if (ioctl(pProps->fd, TIOCSSERIAL, &ser_info) == -1) {
-		fprintf(stderr, "[%s]: TIOCGSERIAL failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCGSERIAL failed with error \"%s\"",
 				__func__, strerror(errno));
 		return 0;
 	}
@@ -50,7 +53,7 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 
 	pProps = (struct sserial_props *)malloc(sizeof(struct sserial_props));
 	if (pProps == NULL) {
-		fprintf(stderr, "[%s]: Allocating pProps failed with error \"%s\"\n",
+		LOGE("[%s]: Allocating pProps failed with error \"%s\"",
 				__func__, strerror(errno));
 		return NULL;
 	}
@@ -59,9 +62,9 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	pthread_mutex_init(&pProps->mtx_rx, NULL);
 	pthread_mutex_init(&pProps->mtx_tx, NULL);
 
-	fprintf(stderr, "Port name: %s Baudrate: %d\n", portName, nBaudrate);
+	LOGI("Port name: %s Baudrate: %d", portName, nBaudrate);
 	if ((pProps->fd = open(portName, O_RDWR | O_NOCTTY | O_NDELAY)) == -1) {
-		fprintf(stderr, "[%s]: open() failed with error \"%s\"\n",
+		LOGE("[%s]: open() failed with error \"%s\"",
 				__func__, strerror(errno));
 		goto error_open;
 	}
@@ -69,7 +72,7 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	fcntl(pProps->fd, F_SETFL, /*FNDELAY*/0);
 
 	if (tcgetattr(pProps->fd, &pProps->otinfo) == -1) {
-		fprintf(stderr, "[%s]: tcgetattr() failed with error \"%s\"\n",
+		LOGE("[%s]: tcgetattr() failed with error \"%s\"",
 				__func__, strerror(errno));
 		goto error_init;
 	}
@@ -91,21 +94,21 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 	attr.c_cc[VMIN] = 0;
 	attr.c_cc[VTIME] = 150;
 	if (tcflush(pProps->fd, TCIOFLUSH) == -1) {
-		fprintf(stderr, "[%s]: tcflush() failed with error \"%s\"\n",
+		LOGE("[%s]: tcflush() failed with error \"%s\"",
 				__func__, strerror(errno));
 		goto error_init;
 	}
 
 	//cfmakeraw(&attr);
 	if (tcsetattr(pProps->fd, TCSANOW, &attr) == -1) {
-		fprintf(stderr, "[%s]: tcsetattr() failed with error \"%s\"\n",
+		LOGE("[%s]: tcsetattr() failed with error \"%s\"",
 				__func__, strerror(errno));
 		goto error_init;
 	}
 
 #if 0
 	if (!SetBaudrate(pProps, nBaudrate)) {
-		fprintf(stderr, "[%s]: Configuring baudrate failed\n", __func__);
+		LOGE("[%s]: Configuring baudrate failed", __func__);
 		goto error_init;
 	}
 #endif
@@ -117,7 +120,7 @@ struct sserial_props *OpenPort(const char *portName, int nBaudrate) {
 
 error_init:
 	if (close(pProps->fd)) {
-		fprintf(stderr, "[%s]: Closing port file descriptor (%d) failed with error \"%s\"\n",
+		LOGE("[%s]: Closing port file descriptor (%d) failed with error \"%s\"",
 				__func__, pProps->fd, strerror(errno));
 	}
 
@@ -129,19 +132,19 @@ error_open:
 
 void ClosePort(struct sserial_props *pProps) {
 	if (pProps == NULL) {
-		fprintf(stderr, "[%s]: pProps is NULL\n", __func__);
+		LOGE("[%s]: pProps is NULL", __func__);
 		return;
 	}
 
 	if (pProps->fd < 0) {
-		fprintf(stderr, "[%s]: Wrong file descriptor (%d)\n",
+		LOGE("[%s]: Wrong file descriptor (%d)",
 				__func__, pProps->fd);
 		return;
 	}
 
 	tcsetattr(pProps->fd, TCSANOW, &pProps->otinfo);
 	if (close(pProps->fd)) {
-		fprintf(stderr, "[%s]: Closing port file descriptor (%d) failed with error \"%s\"\n",
+		LOGE("[%s]: Closing port file descriptor (%d) failed with error \"%s\"",
 				__func__, pProps->fd, strerror(errno));
 	}
 
@@ -154,7 +157,7 @@ int UpdateRts(struct sserial_props *pProps, int bSet) {
 	pthread_mutex_lock(&pProps->mtx_ctrl);
 
 	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
-		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCMGET failed with error \"%s\"",
 				__func__, strerror(errno));
 		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
@@ -166,7 +169,7 @@ int UpdateRts(struct sserial_props *pProps, int bSet) {
 		status &= ~TIOCM_RTS;
 
 	if (ioctl(pProps->fd, TIOCMSET, &status) == -1) {
-		fprintf(stderr, "[%s]: TIOCMSET failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCMSET failed with error \"%s\"",
 				__func__, strerror(errno));
 		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
@@ -182,7 +185,7 @@ int UpdateDtr(struct sserial_props *pProps, int bSet) {
 	pthread_mutex_lock(&pProps->mtx_ctrl);
 
 	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
-		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCMGET failed with error \"%s\"",
 				__func__, strerror(errno));
 		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
@@ -194,7 +197,7 @@ int UpdateDtr(struct sserial_props *pProps, int bSet) {
 		status &= ~TIOCM_DTR;
 
 	if (ioctl(pProps->fd, TIOCMSET, &status) == -1) {
-		fprintf(stderr, "[%s]: TIOCMSET failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCMSET failed with error \"%s\"",
 				__func__, strerror(errno));
 		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return 0;
@@ -210,7 +213,7 @@ int GetCts(struct sserial_props *pProps) {
 	pthread_mutex_lock(&pProps->mtx_ctrl);
 
 	if (ioctl(pProps->fd, TIOCMGET, &status) == -1) {
-		fprintf(stderr, "[%s]: TIOCMGET failed with error \"%s\"\n",
+		LOGE("[%s]: TIOCMGET failed with error \"%s\"",
 				__func__, strerror(errno));
 		pthread_mutex_unlock(&pProps->mtx_ctrl);
 		return -1;
@@ -224,14 +227,14 @@ int GetCts(struct sserial_props *pProps) {
 
 ssize_t ReadPort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
 	if (pthread_mutex_trylock(&pProps->mtx_rx) == EBUSY) {
-		fprintf(stderr, "[%s]: Another read process ongoing\n", __func__);
+		LOGE("[%s]: Another read process ongoing", __func__);
 		return -1;
 	}
 
 	ssize_t nRead = read(pProps->fd, pBuff, nSize);
 #if DEBUG
 	if (nRead == -1) {
-		fprintf(stderr, "[%s]: Detected error on read %d = \"%s\"\n", __func__,
+		LOGE("[%s]: Detected error on read %d = \"%s\"", __func__,
 				errno, strerror(errno));
 	}
 #endif
@@ -241,14 +244,14 @@ ssize_t ReadPort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
 
 ssize_t WritePort(struct sserial_props *pProps, void *pBuff, size_t nSize) {
 	if (pthread_mutex_trylock(&pProps->mtx_tx) == EBUSY) {
-		fprintf(stderr, "[%s]: Another read process ongoing\n", __func__);
+		LOGE("[%s]: Another read process ongoing", __func__);
 		return -1;
 	}
 
 	ssize_t nWritten = write(pProps->fd, pBuff, nSize);
 #if DEBUG
 	if (nWritten == -1) {
-		fprintf(stderr, "[%s]: Detected error on write %d = \"%s\"\n", __func__,
+		LOGE("[%s]: Detected error on write %d = \"%s\"", __func__,
 				errno, strerror(errno));
 	}
 #endif

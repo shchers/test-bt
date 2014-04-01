@@ -2,6 +2,7 @@ CC := $(CROSS_COMPILE)gcc
 ifeq ($(DEBUG),1)
 CFLAGS += -DDEBUG
 endif
+CFLAGS += -DLOG_ENABLE_COLORS
 CFLAGS += -std=gnu89
 CFLAGS += -D__USE_MISC
 LDFLAGS += -pthread
