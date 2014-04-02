@@ -4,6 +4,9 @@
 #include <time.h> // Just for sleep funciton
 #include "sserial.h"
 
+#define TAG "Main"
+#include "log.h"
+
 #define OK_BUFF_LENGTH (5)
 
 #if 0
@@ -36,7 +39,7 @@ ssize_t readLine(struct sserial_props *pProps, char *pBuff, ssize_t nLength) {
 	ssize_t nReadTotal = 0;
 
 	if (nLength < 2) {
-		fprintf(stderr, "[%s] Buffer too short (%ld)\n", __func__, nLength);
+		LOGE("[%s] Buffer too short (%ld)", __func__, nLength);
 		return -1;
 	}
 
@@ -45,76 +48,79 @@ ssize_t readLine(struct sserial_props *pProps, char *pBuff, ssize_t nLength) {
 
 	while (nReadTotal < 2 || strncmp(pBuff + (nReadTotal - 2), "\x0a\x0a", 2) != 0) {
 		if (nReadTotal == nLength) {
-			fprintf(stderr, "[%s] Buffer too short for this line(%ld) - CRLF not find\n", __func__, nLength);
+			LOGE("[%s] Buffer too short for this line(%ld) - CRLF not find", __func__, nLength);
 			return -1;
 		}
 
 		ssize_t nRead = ReadPort(pProps, (void*)(pBuff + nReadTotal), 1);
 		if (nRead == -1) {
-			fprintf(stderr, "[%s] Reading from port failed (nReadTotal = %ld)\n", __func__, nReadTotal);
+			LOGE("[%s] Reading from port failed (nReadTotal = %ld)", __func__, nReadTotal);
 			return -1;
 		}
 
 #ifdef DEBUG
 		static int b = 0;
 		if (b != 0 && nRead == 0) {
-			fprintf(stderr, ">> Nothing to read\n");
+			LOGW(">> Nothing to read");
 			b = 1;
 		}
+
+		LOGV(">> 0x%.2X", pBuff[nReadTotal]);
 #else
 		if (nRead == 0) {
-			fprintf(stderr, ">> Nothing to read\n");
+			LOGW(">> Nothing to read");
 			return -1;
 		}
 #endif
 
-		fprintf(stderr, ">> 0x%.2X\n", pBuff[nReadTotal]);
-
 		nReadTotal += nRead;
 	}
 
-	fprintf(stderr, ">> Done = %s\n", pBuff);
+#ifdef DEBUG
+	LOGV(">> Done = %s", pBuff);
+#endif
+
 	return nReadTotal;
 }
 
 int initBluetooth(struct sserial_props *pProps) {
 	char pBuff[OK_BUFF_LENGTH] = {0};
 
-	fprintf(stderr, "> Triger reset pin\n");
+	LOGI("> Triger reset pin");
 	resetBluetooth(pProps);
 
-	fprintf(stderr, "> Switch device to AT-mode\n");
+	LOGI("> Switch device to AT-mode");
 	ClrDtr(pProps);
 	SleepMs(1000);
 
 #if 0
-	fprintf(stderr, "> Reset to default\n");
+	LOGV("> Reset to default");
 	WritePort(pProps, "AT+ORGL" CRLF, strlen("AT+ORGL" CRLF));
 	SleepMs(1000);
 #endif
 
-	fprintf(stderr, "> Switch to Slave mode\n");
+	LOGV("> Switch to Slave mode");
 	WritePort(pProps, "AT+ROLE=0" CRLF, strlen("AT+ROLE=0" CRLF));
 	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
-		fprintf(stderr, "AT+ROLE failed to set (%s)\n", pBuff);
+		LOGE("AT+ROLE failed to set (%s)", pBuff);
 		return 0;
 	}
 
-	fprintf(stderr, "> Set name\n");
+	LOGV("> Set name");
 	WritePort(pProps, "AT+NAME=ww-test" CRLF, strlen("AT+NAME=qq-test" CRLF));
 	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
-		fprintf(stderr, "AT+NAME failed to set (%s)\n", pBuff);
+		LOGE("AT+NAME failed to set (%s)", pBuff);
 		return 0;
 	}
 
-	fprintf(stderr, "> Set password\n");
+	LOGV("> Set password");
 	WritePort(pProps, "AT+PSWD=1237" CRLF, strlen("AT+PSWD=1235" CRLF));
 	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
-		fprintf(stderr, "AT+PSWD failed to set (%s)\n", pBuff);
+		LOGE("AT+PSWD failed to set (%s)", pBuff);
 		return 0;
 	}
 
-	fprintf(stderr, "> Switch device to Data-mode\n");
+	LOGI("> Switch device to Data-mode");
 	SetDtr(pProps);
 	SleepMs(10);
 
@@ -126,12 +132,12 @@ int initBluetooth(struct sserial_props *pProps) {
 int main(void) {
 	struct sserial_props *pProps = OpenPort("/dev/ttyUSB0", 38400);
 	if (pProps == NULL) {
-		fprintf(stderr, "Port init failed\n");
+		LOGE("Port init failed");
 		return 1;
 	}
 
 	if (!initBluetooth(pProps)) {
-		fprintf(stderr, "[%s] Bluetooth init failed\n", __func__);
+		LOGE("[%s] Bluetooth init failed", __func__);
 		goto exit;
 	}
 
@@ -148,7 +154,7 @@ int main(void) {
 		if (ReadPort(pProps, &ch, 1) <= 0 ||
 				ch == '\r' || ch == '\n')
 			continue;
-		printf(">> %c\n", ch);
+		LOGV(">> %c", ch);
 	}
 
 exit:
