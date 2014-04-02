@@ -2,12 +2,28 @@
 #include <stdint.h>
 #include <string.h>
 #include <time.h> // Just for sleep funciton
+#include <unistd.h> // needed by getopt()
+#include <getopt.h>
+#include <stdlib.h> // Used by atoi()
 #include "sserial.h"
 
 #define TAG "Main"
 #include "log.h"
 
 #define OK_BUFF_LENGTH (5)
+
+#define DEFAULT_PORT_NAME   "/dev/ttyUSB0"
+#define DEFAULT_BAUDRATE    (38400);
+#define DEFAULT_BT_NAME     "Test-BT"
+#define DEFAULT_BT_PIN      "0000"
+// XXX: Max pin code length hardcoded to 4 (four) digits, intead of 16
+#define DEFAULT_BT_PIN_MAX  (4)
+
+#define OPT_PORT_NAME "port"
+#define OPT_BAUDRATE  "baud"
+#define OPT_BT_NAME   "name"
+#define OPT_BT_PIN    "pin"
+#define OPT_HELP      "help"
 
 #if 0
 void SleepMs(unsigned nDelayMs) {
@@ -83,7 +99,8 @@ ssize_t readLine(struct sserial_props *pProps, char *pBuff, ssize_t nLength) {
 	return nReadTotal;
 }
 
-int initBluetooth(struct sserial_props *pProps) {
+int initBluetooth(struct sserial_props *pProps, const char *btName, const char *btPin) {
+	char pTxBuff[32];
 	char pBuff[OK_BUFF_LENGTH] = {0};
 
 	LOGI("> Triger reset pin");
@@ -107,14 +124,16 @@ int initBluetooth(struct sserial_props *pProps) {
 	}
 
 	LOGV("> Set name");
-	WritePort(pProps, "AT+NAME=ww-test" CRLF, strlen("AT+NAME=qq-test" CRLF));
+	int nLength = sprintf(pTxBuff, "AT+NAME=%s" CRLF, btName);
+	WritePort(pProps, pTxBuff, nLength);
 	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
 		LOGE("AT+NAME failed to set (%s)", pBuff);
 		return 0;
 	}
 
 	LOGV("> Set password");
-	WritePort(pProps, "AT+PSWD=1237" CRLF, strlen("AT+PSWD=1235" CRLF));
+	nLength = sprintf(pTxBuff, "AT+PSWD=%s" CRLF, btPin);
+	WritePort(pProps, pTxBuff, nLength);
 	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
 		LOGE("AT+PSWD failed to set (%s)", pBuff);
 		return 0;
@@ -129,14 +148,114 @@ int initBluetooth(struct sserial_props *pProps) {
 	return 1;
 }
 
-int main(void) {
-	struct sserial_props *pProps = OpenPort("/dev/ttyUSB0", 38400);
+void usage(void) {
+	fprintf(stderr, "\nSupported options\n\n"
+		"\t-p,--" OPT_PORT_NAME "\t\tSet port name\n"
+		"\t-b,--" OPT_BAUDRATE "\t\tSet port baudrate\n"
+		"\t-n,--" OPT_BT_NAME "\t\tSet Bluetooth device name\n"
+		"\t-c,--" OPT_BT_PIN "\t\tSet Bluetooth device access pin code (up to four digits)\n\n"
+	);
+}
+
+int main(int argc, char *argv[]) {
+	// Command line arguments
+	const char *optString = "p:b:n:c:h?";
+	const struct option longOpts[] = {
+		{ OPT_PORT_NAME, required_argument, NULL, 'p' },
+		{ OPT_BAUDRATE, required_argument, NULL, 'b' },
+		{ OPT_BT_NAME, required_argument, NULL, 'n' },
+		{ OPT_BT_PIN, required_argument, NULL, 'c' },
+		{ OPT_HELP, no_argument, NULL, 'h' },
+		{ NULL, no_argument, NULL, 0 }
+	};
+
+	// Port properties
+	int nBaudrate = 0;
+	const char *portName = NULL;
+
+	// BT properties
+	const char *btName = NULL;
+	const char *btPin = NULL;
+
+	int opt, longIndex;
+	while ((opt = getopt_long( argc, argv, optString, longOpts, &longIndex)) != -1) {
+		switch(opt) {
+			case 'p':
+				portName = optarg;
+				break;
+			case 'b':
+				nBaudrate = atoi(optarg);
+				break;
+			case 'n':
+				btName = optarg;
+				break;
+			case 'c':
+				btPin = optarg;
+				break;
+			case 'h':
+				usage();
+				exit(0);
+				break;
+			// Case for long names
+			case 0:
+				if (strcmp(OPT_PORT_NAME, longOpts[longIndex].name) == 0) {
+					portName = optarg;
+				} else if (strcmp(OPT_BAUDRATE, longOpts[longIndex].name) == 0) {
+					nBaudrate = atoi(optarg);
+				} else if (strcmp(OPT_BT_NAME, longOpts[longIndex].name) == 0) {
+					btName = optarg;
+				} else if (strcmp(OPT_BT_PIN, longOpts[longIndex].name) == 0) {
+					btPin = optarg;
+				} else if (strcmp(OPT_HELP, longOpts[longIndex].name) == 0) {
+					usage();
+					exit(0);
+				}
+				break;
+			default:
+				usage();
+				exit(0);
+				break;
+		}
+	}
+
+	if (portName == NULL) {
+		portName = DEFAULT_PORT_NAME;
+		LOGW("Port name not defined and will be used default \"%s\"", portName);
+	}
+
+	if (nBaudrate == 0) {
+		nBaudrate = DEFAULT_BAUDRATE;
+		LOGW("Baudrate not defined and will be used default \"%d\"", nBaudrate);
+	}
+
+	if (btName == NULL) {
+		btName = DEFAULT_BT_NAME;
+		LOGW("Bluetooth name not defined and will be used default \"%s\"", btName);
+	}
+
+	if (btPin == NULL || strlen(btPin) > DEFAULT_BT_PIN_MAX) {
+		if (btPin == NULL) {
+			LOGW("Bluetooth pin code not defined and will be used default \"%s\"", DEFAULT_BT_PIN);
+		} else {
+			LOGW("Bluetooth pin code too long (%lu), than should be (%d) and will be used default \"%s\"",
+					strlen(btPin), DEFAULT_BT_PIN_MAX, btPin);
+		}
+
+		btPin = DEFAULT_BT_PIN;
+	}
+
+	LOGV("Port name = %s", portName);
+	LOGV("Baudrate = %d", nBaudrate);
+	LOGV("Bluetooth name = %s", btName);
+	LOGV("Bluetooth pin code = %s", btPin);
+
+	struct sserial_props *pProps = OpenPort(portName, nBaudrate);
 	if (pProps == NULL) {
 		LOGE("Port init failed");
 		return 1;
 	}
 
-	if (!initBluetooth(pProps)) {
+	if (!initBluetooth(pProps, btName, btPin)) {
 		LOGE("[%s] Bluetooth init failed", __func__);
 		goto exit;
 	}
