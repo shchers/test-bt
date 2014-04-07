@@ -100,6 +100,21 @@ ssize_t readLine(struct sserial_props *pProps, char *pBuff, ssize_t nLength) {
 	return nReadTotal;
 }
 
+int getResult(struct sserial_props *pProps, const char *pCmd, char *pResponse, int nRespLength) {
+	WritePort(pProps, (void*)pCmd, strlen(pCmd));
+	int nLength = readLine(pProps, pResponse, nRespLength);
+	if (nLength > 4) {
+		// Cut out CRLF at the end of buffer
+		pResponse[nLength - 2] = '\0';
+		size_t nOffset = strchr(pResponse,':') - pResponse + 1;
+		LOGV("Response: \"%s\", Payload: \"%s\", Offset: %ld", pResponse, pResponse + nOffset, nOffset);
+		strcpy(pResponse, pResponse + nOffset);
+		return strlen(pResponse);
+	}
+
+	return 0;
+}
+
 int initBluetooth(struct sserial_props *pProps, const char *btName, const char *btPin) {
 	char pTxBuff[32];
 	char pRxBuff[RX_BUFF_LENGTH] = {0};
@@ -126,21 +141,16 @@ int initBluetooth(struct sserial_props *pProps, const char *btName, const char *
 		return 0;
 	}
 
-	WritePort(pProps, "AT+NAME?" CRLF, strlen("AT+NAME?" CRLF));
-	nLength = readLine(pProps, pRxBuff, RX_BUFF_LENGTH);
-	if (nLength) {
-		pRxBuff[nLength - 2] = '\0';
-		LOGE("Current name: \"%s\"", strchr(pRxBuff,':') + 1);
-	}
+	if (getResult(pProps, "AT+NAME?" CRLF, pRxBuff, RX_BUFF_LENGTH)) {
+		bSame = strncmp(pRxBuff, btName, strlen(btName)) == 0;
 
-	bSame = strncmp(strchr(pRxBuff,':') + 1, btName, strlen(btName)) == 0;
+		// Get "OK"
+		readLine(pProps, pRxBuff, OK_BUFF_LENGTH);
 
-	// Get "OK"
-	readLine(pProps, pRxBuff, OK_BUFF_LENGTH);
-
-	if (bSame) {
-		LOGW("Bluetooth name is same and will not be changed");
-		goto skip_name;
+		if (bSame) {
+			LOGW("Bluetooth name is same and will not be changed");
+			goto skip_name;
+		}
 	}
 
 	LOGV("> Set name");
@@ -153,21 +163,16 @@ int initBluetooth(struct sserial_props *pProps, const char *btName, const char *
 	}
 
 skip_name:
-	WritePort(pProps, "AT+PSWD?" CRLF, strlen("AT+PSWD?" CRLF));
-	nLength = readLine(pProps, pRxBuff, RX_BUFF_LENGTH);
-	if (nLength) {
-		pRxBuff[nLength - 2] = '\0';
-		LOGE("Current pin code: \"%s\"", strchr(pRxBuff,':') + 1);
-	}
+	if (getResult(pProps, "AT+PSWD?" CRLF, pRxBuff, RX_BUFF_LENGTH)) {
+		bSame = strncmp(pRxBuff, btPin, strlen(btPin)) == 0;
 
-	bSame = strncmp(strchr(pRxBuff,':') + 1, btPin, strlen(btPin)) == 0;
+		// Get "OK"
+		readLine(pProps, pRxBuff, OK_BUFF_LENGTH);
 
-	// Get "OK"
-	readLine(pProps, pRxBuff, OK_BUFF_LENGTH);
-
-	if (bSame) {
-		LOGW("Bluetooth pin code is same and will not be changed");
-		goto skip_password;
+		if (bSame) {
+			LOGW("Bluetooth pin code is same and will not be changed");
+			goto skip_password;
+		}
 	}
 
 	LOGV("> Set password");
