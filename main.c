@@ -11,6 +11,7 @@
 #include "log.h"
 
 #define OK_BUFF_LENGTH (5)
+#define RX_BUFF_LENGTH (32)
 
 #define DEFAULT_PORT_NAME   "/dev/ttyUSB0"
 #define DEFAULT_BAUDRATE    (38400);
@@ -101,7 +102,8 @@ ssize_t readLine(struct sserial_props *pProps, char *pBuff, ssize_t nLength) {
 
 int initBluetooth(struct sserial_props *pProps, const char *btName, const char *btPin) {
 	char pTxBuff[32];
-	char pBuff[OK_BUFF_LENGTH] = {0};
+	char pRxBuff[RX_BUFF_LENGTH] = {0};
+	int bSame, nLength;
 
 	LOGI("> Triger reset pin");
 	resetBluetooth(pProps);
@@ -118,27 +120,66 @@ int initBluetooth(struct sserial_props *pProps, const char *btName, const char *
 
 	LOGV("> Switch to Slave mode");
 	WritePort(pProps, "AT+ROLE=0" CRLF, strlen("AT+ROLE=0" CRLF));
-	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
-		LOGE("AT+ROLE failed to set (%s)", pBuff);
+	if (readLine(pProps, pRxBuff, OK_BUFF_LENGTH) <= 0 &&
+			strncasecmp(pRxBuff, "ok", 2)) {
+		LOGE("AT+ROLE failed to set (%s)", pRxBuff);
 		return 0;
 	}
 
+	WritePort(pProps, "AT+NAME?" CRLF, strlen("AT+NAME?" CRLF));
+	nLength = readLine(pProps, pRxBuff, RX_BUFF_LENGTH);
+	if (nLength) {
+		pRxBuff[nLength - 2] = '\0';
+		LOGE("Current name: \"%s\"", strchr(pRxBuff,':') + 1);
+	}
+
+	bSame = strncmp(strchr(pRxBuff,':') + 1, btName, strlen(btName)) == 0;
+
+	// Get "OK"
+	readLine(pProps, pRxBuff, OK_BUFF_LENGTH);
+
+	if (bSame) {
+		LOGW("Bluetooth name is same and will not be changed");
+		goto skip_name;
+	}
+
 	LOGV("> Set name");
-	int nLength = sprintf(pTxBuff, "AT+NAME=%s" CRLF, btName);
+	nLength = sprintf(pTxBuff, "AT+NAME=%s" CRLF, btName);
 	WritePort(pProps, pTxBuff, nLength);
-	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
-		LOGE("AT+NAME failed to set (%s)", pBuff);
+	if (readLine(pProps, pRxBuff, OK_BUFF_LENGTH) <= 0 &&
+			strncasecmp(pRxBuff, "ok", 2)) {
+		LOGE("AT+NAME failed to set (%s)", pRxBuff);
 		return 0;
+	}
+
+skip_name:
+	WritePort(pProps, "AT+PSWD?" CRLF, strlen("AT+PSWD?" CRLF));
+	nLength = readLine(pProps, pRxBuff, RX_BUFF_LENGTH);
+	if (nLength) {
+		pRxBuff[nLength - 2] = '\0';
+		LOGE("Current pin code: \"%s\"", strchr(pRxBuff,':') + 1);
+	}
+
+	bSame = strncmp(strchr(pRxBuff,':') + 1, btPin, strlen(btPin)) == 0;
+
+	// Get "OK"
+	readLine(pProps, pRxBuff, OK_BUFF_LENGTH);
+
+	if (bSame) {
+		LOGW("Bluetooth pin code is same and will not be changed");
+		goto skip_password;
 	}
 
 	LOGV("> Set password");
 	nLength = sprintf(pTxBuff, "AT+PSWD=%s" CRLF, btPin);
 	WritePort(pProps, pTxBuff, nLength);
-	if (readLine(pProps, pBuff, OK_BUFF_LENGTH) <= 0 && strncasecmp(pBuff, "ok", 2)) {
-		LOGE("AT+PSWD failed to set (%s)", pBuff);
+	if (readLine(pProps, pRxBuff, OK_BUFF_LENGTH) <= 0 &&
+			strncasecmp(pRxBuff, "ok", 2)) {
+		LOGE("AT+PSWD failed to set (%s)", pRxBuff);
 		return 0;
 	}
 
+skip_password:
 	LOGI("> Switch device to Data-mode");
 	SetDtr(pProps);
 	SleepMs(10);
